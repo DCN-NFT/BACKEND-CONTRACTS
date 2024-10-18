@@ -59,6 +59,7 @@ contract DCN {
 
         // Ensure that a NamingService has been claimed before proceeding
         require(_namingservice == NamingService.Claimed, "Naming service must be claimed before registration. Please claim and try again.");
+        require(Schools[_id].namingservice != 0,"The name exist");
 
         // Check if the naming service ends with '.arb'
         require(endsWithArb(_naming), "The naming service must end with '.arb'.");
