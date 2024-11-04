@@ -1,126 +1,97 @@
 // SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.28;
+import "./Credentials.sol";
+import "./TimeManagement.sol";
 
-contract StudentsContract {
-    // Custom errors
-    error AlreadyRegisteredStudent();
-    error NotRegisteredStudent();
-    error InvalidStudentID();
-    error InvalidAddress();
-    error EmptyIPFSHash();
-    error StudentNotLoggedIn();
-    error StudentAlreadyLoggedIn();
+contract StudentContract {
 
-    struct Student {
-        uint256 studentID;
-        address wallet;
-        bool isRegistered;
-        uint256 registrationTime;
-        string ipfsHash; // IPFS hash for student details
-        bool isLoggedIn;  // Track if the student is logged in
+    using TimeManagement for TimeManagement.TimeManagerStorage;
+
+    //Adding credential contract instannce
+    CredentialContract private credentialContract;
+    
+    //Adding consructor to initialize the credentiALContract.
+    constructor(address _credentialContractAddress) {
+        credentialContract = CredentialContract(_credentialContractAddress);
     }
+    
+    TimeManagement.TimeManagerStorage private timeManager;
 
-    // Mappings
-    mapping(address => Student) internal students;
-    mapping(uint256 => address) internal studentIDs;
+    struct CredentialInfo {
+    bytes32 credentialHash;
+    string courseName;
+    string grade;
+    uint256 issueDate;
+    address issuer;
+    string credentialURI;
+}
 
-    // Events
-    event StudentRegistered(address indexed studentAddress, uint256 studentID, string ipfsHash, uint256 timestamp);
-    event StudentProfileUpdated(address indexed studentAddress, uint256 studentID, string newIpfsHash, uint256 timestamp);
-    event StudentLoggedIn(address indexed studentAddress, uint256 timestamp);
-    event StudentLoggedOut(address indexed studentAddress, uint256 timestamp);
+    struct StudentStruct{
+        string  ipfsHash;
+        address addedWallet;
+    }
+    mapping(address=>StudentStruct) internal student;
 
-    // Modifiers
-    modifier onlyUnregisteredStudent() {
-        if (students[msg.sender].isRegistered) revert AlreadyRegisteredStudent();
+     error NotLoggedIn();
+
+         modifier onlyLoggedIn() {
+        if (!timeManager.isUserLoggedIn(msg.sender)) revert NotLoggedIn();
         _;
     }
-
-    modifier onlyRegisteredStudent() {
-        if (!students[msg.sender].isRegistered) revert NotRegisteredStudent();
-        _;
+    
+    function studentLogin() public returns (string memory) {
+        return timeManager.logIn();
     }
-
-    modifier onlyLoggedInStudent() {
-        if (!students[msg.sender].isLoggedIn) revert StudentNotLoggedIn();
-        _;
+    
+    function studentLogout() public returns (string memory) {
+        return timeManager.logOut();
     }
+    
+    function updateProfile(
+        string  memory _ipfsHash,
+        address _addedWallet
+        ) external onlyLoggedIn returns(string memory){    
+            student[msg.sender] = StudentStruct({
+              ipfsHash : _ipfsHash,
+              addedWallet :  _addedWallet 
+            });
+            return "Success";    
+        }
 
-    modifier validStudentID(uint256 _studentID) {
-        if (_studentID == 0) revert InvalidStudentID();
-        _;
-    }
+        function verifyCredential(uint256  _credentialId, address _issuer) external view returns(bool){
+            return credentialContract.ownerOf(_credentialId) == _issuer;
+        }
 
-    // Student Registration with IPFS Hash
-    function registerStudent(uint256 _studentID, string memory _ipfsHash) 
-        external 
-        onlyUnregisteredStudent 
-        validStudentID(_studentID)
-        returns (bool) 
-    {
-        if (bytes(_ipfsHash).length == 0) revert EmptyIPFSHash();
-        if (studentIDs[_studentID] != address(0)) revert InvalidStudentID(); // Ensures ID is unique
+        function claimCredential(bytes32 _credentialHash) public onlyLoggedIn returns(string memory){
 
-        students[msg.sender] = Student({
-            studentID: _studentID,
-            wallet: msg.sender,
-            isRegistered: true,
-            registrationTime: block.timestamp,
-            ipfsHash: _ipfsHash,
-            isLoggedIn: true // Automatically log in upon registration
-        });
+            credentialContract.claimCredential(_credentialHash);
 
-        studentIDs[_studentID] = msg.sender;
+            return "Successfully claimed the credential";
+        }
 
-        emit StudentRegistered(msg.sender, _studentID, _ipfsHash, block.timestamp);
-        emit StudentLoggedIn(msg.sender, block.timestamp); // Emit login event on registration
-        return true;
-    }
-
-    // Update student profile with new IPFS hash
-    function updateStudentProfile(string memory _newIpfsHash) 
-        external 
-        onlyRegisteredStudent 
-        onlyLoggedInStudent 
-        returns (bool) 
-    {
-        if (bytes(_newIpfsHash).length == 0) revert EmptyIPFSHash();
+    function getMyCredentials() external view onlyLoggedIn returns (CredentialInfo[] memory) {
+    uint256[] memory tokenIds = credentialContract.getOwnedCredentials(msg.sender);
+    CredentialInfo[] memory credentials = new CredentialInfo[](tokenIds.length);
+    
+    for (uint256 i = 0; i < tokenIds.length; i++) {
+        bytes32 hash = credentialContract.getHashFromTokenId(tokenIds[i]);
+        string memory courseName = credentialContract.getCourseName(hash);
+        string memory grade = credentialContract.getGrade(hash);
+        uint256 issueDate = credentialContract.getIssueDate(hash);
+        address issuer = credentialContract.getCredentialIssuer(hash);
+        string memory uri = credentialContract.getCredentialURI(hash);
         
-        students[msg.sender].ipfsHash = _newIpfsHash;
-
-        emit StudentProfileUpdated(msg.sender, students[msg.sender].studentID, _newIpfsHash, block.timestamp);
-        return true;
+        credentials[i] = CredentialInfo({
+            credentialHash: hash,
+            courseName: courseName,
+            grade: grade,
+            issueDate: issueDate,
+            issuer: issuer,
+            credentialURI: uri
+        });
     }
-
-    // Student Login
-    function loginStudent() 
-        external 
-        onlyRegisteredStudent 
-    {
-        if (students[msg.sender].isLoggedIn) revert StudentAlreadyLoggedIn();
-
-        students[msg.sender].isLoggedIn = true;
-        emit StudentLoggedIn(msg.sender, block.timestamp);
-    }
-
-    // Student Logout
-    function logoutStudent() 
-        external 
-        onlyRegisteredStudent 
-        onlyLoggedInStudent 
-    {
-        students[msg.sender].isLoggedIn = false;
-        emit StudentLoggedOut(msg.sender, block.timestamp);
-    }
-
-    // Additional Functions for Management, Querying, etc.
-    function getStudentDetails(address _studentAddress) 
-        external 
-        view 
-        onlyRegisteredStudent 
-        onlyLoggedInStudent 
-        returns (Student memory) 
-    {
-        return students[_studentAddress];
-    }
+    
+    return credentials;
+}
 }
