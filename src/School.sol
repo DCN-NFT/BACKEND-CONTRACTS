@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
-
+import "./Credentials.sol";
+import "./TimeManagement.sol";
 contract SchoolContract {
     
+    TimeManagement.TimeManagerStorage private timeManager;
     // Custom Errors
-    error NotRegisteredSchool();
-    error AlreadyRegisteredSchool();
     error EmptySchoolHash();
     error SchoolNotLoggedIn();
     error SchoolAlreadyLoggedIn();
@@ -15,6 +15,15 @@ contract SchoolContract {
     error AdminNotFound();
     error InvalidAddress();
     error EmptyAdminName();
+
+
+     //Adding credential contract instannce
+    CredentialContract private credentialContract;
+    
+    //Adding consructor to initialize the credentiALContract.
+    constructor(address _credentialContractAddress) {
+        credentialContract = CredentialContract(_credentialContractAddress);
+    }
     
     struct SchoolStruct {
         string schoolHash;
@@ -39,18 +48,13 @@ contract SchoolContract {
     mapping(address => address[]) private schoolAdminList;
 
     // Events
-    event SchoolRegistered(address indexed schoolAddress, string schoolHash, uint256 timestamp);
+
     event SchoolLoggedIn(address indexed schoolAddress, uint256 timestamp);
     event SchoolLoggedOut(address indexed schoolAddress, uint256 timestamp);
     event SchoolAdminAdded(address indexed schoolAddress, address indexed adminAddress, string adminName, uint256 timestamp);
     event SchoolAdminRemoved(address indexed schoolAddress, address indexed adminAddress, uint256 timestamp);
     event SchoolAdminStatusUpdated(address indexed schoolAddress, address indexed adminAddress, bool isActive, uint256 timestamp);
 
-    // Modifiers
-    modifier onlyRegisteredSchool() {
-        if (!schools[msg.sender].isRegistered) revert NotRegisteredSchool();
-        _;
-    }
 
     modifier onlyLoggedInSchool() {
         if (!schools[msg.sender].isLoggedIn) revert SchoolNotLoggedIn();
@@ -73,30 +77,10 @@ contract SchoolContract {
         _;
     }
 
-    // School Management Functions
-    function registerSchool(string memory _schoolHash) 
-    external 
-    returns (bool) 
-{
-    if (schools[msg.sender].isRegistered) revert AlreadyRegisteredSchool();
-    if (bytes(_schoolHash).length == 0) revert EmptySchoolHash();
-
-    schools[msg.sender] = SchoolStruct({
-        schoolHash: _schoolHash,
-        wallet: msg.sender,
-        isRegistered: true,
-        isLoggedIn: true,
-        lastLoginTime: 0,
-        lastLogoutTime: 0
-    });
-
-    emit SchoolRegistered(msg.sender, _schoolHash, block.timestamp);
-    return true;
-}
+ 
 
     function updateSchoolDetails(string memory _schoolHash) 
     external 
-    onlyRegisteredSchool 
     onlyLoggedInSchool 
     returns (bool) 
 {
@@ -106,9 +90,6 @@ contract SchoolContract {
     // Update the schoolHash
     schools[msg.sender].schoolHash = _schoolHash;
 
-    // Emit an event to track the update
-    emit SchoolRegistered(msg.sender, _schoolHash, block.timestamp);
-
     return true;
 }
 
@@ -116,7 +97,6 @@ contract SchoolContract {
     // Login/Logout Functions
     function loginSchool() 
         external 
-        onlyRegisteredSchool 
         notLoggedInSchool 
         returns (bool) 
     {
@@ -124,6 +104,8 @@ contract SchoolContract {
 
         schools[msg.sender].isLoggedIn = true;
         schools[msg.sender].lastLoginTime = block.timestamp;
+
+        credentialContract.autoGrantSchoolRole(msg.sender);
         
         emit SchoolLoggedIn(msg.sender, block.timestamp);
         return true;
@@ -131,7 +113,6 @@ contract SchoolContract {
 
     function logoutSchool() 
         external 
-        onlyRegisteredSchool 
         onlyLoggedInSchool 
         returns (bool) 
     {
@@ -145,7 +126,6 @@ contract SchoolContract {
     // School Admin Management Functions
     function addSchoolAdmin(address _adminAddress, string memory _adminName) 
         external 
-        onlyRegisteredSchool
         onlyLoggedInSchool
         validAddress(_adminAddress) 
     {
@@ -169,7 +149,6 @@ contract SchoolContract {
 
     function removeSchoolAdmin(address _adminAddress) 
         external 
-        onlyRegisteredSchool
         onlyLoggedInSchool
         validAddress(_adminAddress) 
     {
@@ -182,8 +161,7 @@ contract SchoolContract {
     }
 
     function toggleSchoolAdminStatus(address _adminAddress) 
-        external 
-        onlyRegisteredSchool
+        external
         onlyLoggedInSchool
         validAddress(_adminAddress) 
     {
@@ -199,7 +177,6 @@ contract SchoolContract {
     function getMySchoolDetails() 
         external 
         view 
-        onlyRegisteredSchool 
         returns (SchoolStruct memory) 
     {
         return schools[msg.sender];
@@ -208,7 +185,6 @@ contract SchoolContract {
     function getMySchoolAdmins() 
         external 
         view 
-        onlyRegisteredSchool 
         returns (SchoolAdmin[] memory) 
     {
         address[] memory adminAddresses = schoolAdminList[msg.sender];

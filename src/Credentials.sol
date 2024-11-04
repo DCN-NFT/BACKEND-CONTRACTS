@@ -4,12 +4,19 @@ pragma solidity 0.8.28;
 import { ERC721 } from "../lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
 import { ERC721URIStorage } from "../lib/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import { ERC721Burnable } from "../lib/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721Burnable.sol";
-import { Ownable } from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {AccessControl} from "../lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 import "./Student.sol";
 import "./School.sol";
 
 
-contract CredentialContract is ERC721, ERC721URIStorage, ERC721Burnable, Ownable {
+contract CredentialContract is ERC721, ERC721URIStorage, ERC721Burnable, AccessControl {
+
+    StudentContract public studentContract;
+    SchoolContract public schoolContract;
+        // Add role definitions
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant SCHOOL_ROLE = keccak256("SCHOOL_ROLE");
+    bytes32 public constant STUDENT_ROLE = keccak256("STUDENT_ROLE");
 
     struct Credential {
         string courseName;
@@ -47,9 +54,35 @@ contract CredentialContract is ERC721, ERC721URIStorage, ERC721Burnable, Ownable
         string grade
     );
 
-    constructor(address initialOwner) ERC721("Decentralised Credential Network", "DCN") Ownable(initialOwner) {}
+constructor(
+    address initialOwner,
+    address _schoolContract,
+    address _studentContract
+) ERC721("Decentralised Credential Network", "DCN") {
+    _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+    _grantRole(ADMIN_ROLE, initialOwner);
+    
+    // Fix: Correct the contract initialization syntax
+    schoolContract = SchoolContract(_schoolContract);
+    studentContract = StudentContract(_studentContract);
+}
 
-        // School functions
+function autoGrantSchoolRole(address school) external {
+    // Only allow calls from the school contract
+    require(msg.sender == address(schoolContract), "Only school contract can grant school role");
+    if (!hasRole(SCHOOL_ROLE, school)) {
+        _grantRole(SCHOOL_ROLE, school);
+    }
+}
+
+function autoGrantStudentRole(address student) external {
+    // Only allow calls from the student contract
+    require(msg.sender == address(studentContract), "Only student contract can grant student role");
+    if (!hasRole(STUDENT_ROLE, student)) {
+        _grantRole(STUDENT_ROLE, student);
+    }
+}
+
 
     function createCredential(
     address student,
@@ -202,7 +235,7 @@ function getCredentialHash(
         return super.tokenURI(tokenId);
     }
 
-    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage) returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 
@@ -230,5 +263,23 @@ function getCredentialHash(
                 break;
             }
         }
+    }
+
+    function getCourseName(bytes32 credentialHash) public view returns (string memory) {
+        uint256 tokenId = _hashToTokenId[credentialHash];
+        require(tokenId != 0, "Invalid credential hash");
+        return _credentials[tokenId].courseName;
+    }
+
+    function getGrade(bytes32 credentialHash) public view returns (string memory) {
+        uint256 tokenId = _hashToTokenId[credentialHash];
+        require(tokenId != 0, "Invalid credential hash");
+        return _credentials[tokenId].grade;
+    }
+
+    function getIssueDate(bytes32 credentialHash) public view returns (uint256) {
+        uint256 tokenId = _hashToTokenId[credentialHash];
+        require(tokenId != 0, "Invalid credential hash");
+        return _credentials[tokenId].issueDate;
     }
 }

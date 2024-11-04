@@ -40,9 +40,14 @@ contract StudentContract {
         _;
     }
     
-    function studentLogin() public returns (string memory) {
-        return timeManager.logIn();
-    }
+function studentLogin() public returns (string memory) {
+    string memory result = timeManager.logIn();
+    
+    // Add this line to notify the credential contract
+    credentialContract.autoGrantStudentRole(msg.sender);
+    
+    return result;
+}
     
     function studentLogout() public returns (string memory) {
         return timeManager.logOut();
@@ -76,9 +81,7 @@ contract StudentContract {
     
     for (uint256 i = 0; i < tokenIds.length; i++) {
         bytes32 hash = credentialContract.getHashFromTokenId(tokenIds[i]);
-        string memory courseName = credentialContract.getCourseName(hash);
-        string memory grade = credentialContract.getGrade(hash);
-        uint256 issueDate = credentialContract.getIssueDate(hash);
+        (string memory courseName, string memory grade, uint256 issueDate) = credentialContract.getCredentialDetails(hash);
         address issuer = credentialContract.getCredentialIssuer(hash);
         string memory uri = credentialContract.getCredentialURI(hash);
         
