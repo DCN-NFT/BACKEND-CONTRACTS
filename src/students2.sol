@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
-import "./Credentials.sol";
+
+import {Credentials} from "./Credentials.sol";
 import "./TimeManagement.sol";
+
 contract SchoolContract {
-    
+    using TimeManagement for TimeManagement.TimeManagerStorage;
     TimeManagement.TimeManagerStorage private timeManager;
+
     // Custom Errors
-    error EmptySchoolHash();
     error SchoolNotLoggedIn();
     error SchoolAlreadyLoggedIn();
     error InvalidTimeStamp();
@@ -15,20 +17,17 @@ contract SchoolContract {
     error AdminNotFound();
     error InvalidAddress();
     error EmptyAdminName();
-    error EmptyCredentialHash();
     error InvalidStudent();
 
+    // Adding credential contract instance
+    Credentials private credentialContract;
 
-     //Adding credential contract instannce
-    CredentialContract private credentialContract;
-    
-    //Adding consructor to initialize the credentiALContract.
+    // Adding constructor to initialize the credentialContract
     constructor(address _credentialContractAddress) {
-        credentialContract = CredentialContract(_credentialContractAddress);
+        credentialContract = Credentials(_credentialContractAddress);
     }
-    
+
     struct SchoolStruct {
-        string schoolHash;
         address wallet;
         bool isRegistered;
         bool isLoggedIn;
@@ -50,13 +49,12 @@ contract SchoolContract {
     mapping(address => address[]) private schoolAdminList;
 
     // Events
-
     event SchoolLoggedIn(address indexed schoolAddress, uint256 timestamp);
     event SchoolLoggedOut(address indexed schoolAddress, uint256 timestamp);
     event SchoolAdminAdded(address indexed schoolAddress, address indexed adminAddress, string adminName, uint256 timestamp);
     event SchoolAdminRemoved(address indexed schoolAddress, address indexed adminAddress, uint256 timestamp);
     event SchoolAdminStatusUpdated(address indexed schoolAddress, address indexed adminAddress, bool isActive, uint256 timestamp);
-
+    event CredentialIssued(address indexed schoolAddress, address indexed student, uint256 tokenId, string tokenURI, uint256 timestamp);
 
     modifier onlyLoggedInSchool() {
         if (!schools[msg.sender].isLoggedIn) revert SchoolNotLoggedIn();
@@ -69,7 +67,7 @@ contract SchoolContract {
     }
 
     modifier onlySchoolOrAdmin(address _schoolAddress) {
-        if (msg.sender != _schoolAddress && !isSchoolAdmin[_schoolAddress][msg.sender]) 
+        if (msg.sender != _schoolAddress && !isSchoolAdmin[_schoolAddress][msg.sender])
             revert NotAuthorized();
         _;
     }
@@ -79,60 +77,34 @@ contract SchoolContract {
         _;
     }
 
- 
-
-    function updateSchoolDetails(string memory _schoolHash) 
-    external 
-    onlyLoggedInSchool 
-    returns (bool) 
-{
-    // Ensure the new school hash is not empty
-    if (bytes(_schoolHash).length == 0) revert EmptySchoolHash();
-
-    // Update the schoolHash
-    schools[msg.sender].schoolHash = _schoolHash;
-
-    return true;
-}
-
-
-    // Login/Logout Functions
-    function loginSchool() 
-        external 
-        notLoggedInSchool 
-        returns (bool) 
-    {
-        if (block.timestamp <= schools[msg.sender].lastLogoutTime) revert InvalidTimeStamp();
-
-        schools[msg.sender].isLoggedIn = true;
-        schools[msg.sender].lastLoginTime = block.timestamp;
-
-        credentialContract.autoGrantSchoolRole(msg.sender);
-        
-        emit SchoolLoggedIn(msg.sender, block.timestamp);
-        return true;
+    modifier onlyActiveAdmin(address _schoolAddress, address _adminAddress) {
+        if (!isSchoolAdmin[_schoolAddress][_adminAddress] || !schoolAdmins[_schoolAddress][_adminAddress].isActive)
+            revert NotAuthorized();
+        _;
     }
 
-    function logoutSchool() 
-        external 
-        onlyLoggedInSchool 
-        returns (bool) 
-    {
-        schools[msg.sender].isLoggedIn = false;
-        schools[msg.sender].lastLogoutTime = block.timestamp;
-        
-        emit SchoolLoggedOut(msg.sender, block.timestamp);
-        return true;
+    // Login/Logout Functions
+    function schoolLogin() public returns (string memory) {
+        string memory result = timeManager.logIn();
+
+        // Add this line to notify the credential contract
+        // credentialContract.autoGrantSchoolRole(msg.sender);
+
+        return result;
+    }
+
+    function schoolLogout() public returns (string memory) {
+        return timeManager.logOut();
     }
 
     // School Admin Management Functions
-    function addSchoolAdmin(address _adminAddress, string memory _adminName) 
-        external 
+    function addSchoolAdmin(address _adminAddress, string memory _adminName)
+        external
         onlyLoggedInSchool
-        validAddress(_adminAddress) 
+        validAddress(_adminAddress)
     {
         if (bytes(_adminName).length == 0) revert EmptyAdminName();
-        if (schools[_adminAddress].wallet ==msg.sender) revert ("schools cant be msg.sender");
+        if (schools[_adminAddress].wallet == msg.sender) revert ("schools cant be msg.sender");
         if (isSchoolAdmin[msg.sender][_adminAddress]) revert AdminAlreadyExists();
 
         SchoolAdmin memory newAdmin = SchoolAdmin({
@@ -149,10 +121,10 @@ contract SchoolContract {
         emit SchoolAdminAdded(msg.sender, _adminAddress, _adminName, block.timestamp);
     }
 
-    function removeSchoolAdmin(address _adminAddress) 
-        external 
+    function removeSchoolAdmin(address _adminAddress)
+        external
         onlyLoggedInSchool
-        validAddress(_adminAddress) 
+        validAddress(_adminAddress)
     {
         if (!isSchoolAdmin[msg.sender][_adminAddress]) revert AdminNotFound();
 
@@ -162,10 +134,10 @@ contract SchoolContract {
         emit SchoolAdminRemoved(msg.sender, _adminAddress, block.timestamp);
     }
 
-    function toggleSchoolAdminStatus(address _adminAddress) 
+    function toggleSchoolAdminStatus(address _adminAddress)
         external
         onlyLoggedInSchool
-        validAddress(_adminAddress) 
+        validAddress(_adminAddress)
     {
         if (!isSchoolAdmin[msg.sender][_adminAddress]) revert AdminNotFound();
 
@@ -174,52 +146,107 @@ contract SchoolContract {
 
         emit SchoolAdminStatusUpdated(msg.sender, _adminAddress, newStatus, block.timestamp);
     }
-    
 
     // Getter Functions
-    function getMySchoolDetails() 
-        external 
-        view 
-        returns (SchoolStruct memory) 
+    function getMySchoolDetails()
+        external
+        view
+        returns (SchoolStruct memory)
     {
         return schools[msg.sender];
     }
 
-    function getMySchoolAdmins() 
-        external 
-        view 
-        returns (SchoolAdmin[] memory) 
+    function getMySchoolAdmins()
+        external
+        view
+        returns (SchoolAdmin[] memory)
     {
         address[] memory adminAddresses = schoolAdminList[msg.sender];
         SchoolAdmin[] memory admins = new SchoolAdmin[](adminAddresses.length);
-        
+
         for (uint i = 0; i < adminAddresses.length; i++) {
             admins[i] = schoolAdmins[msg.sender][adminAddresses[i]];
         }
-        
+
         return admins;
     }
-    
-      function issueCredentialsToStudents(
-        string memory _credentialHash,
+
+    // Credential Management Functions
+    function issueCredential(
         address student,
-        bytes memory data
-    ) external onlyLoggedInSchool returns (string memory) {
+        uint256 tokenId,
+        string memory tokenURI
+    ) external onlyLoggedInSchool returns (uint256) {
         // Validate inputs
-        if (bytes(_credentialHash).length == 0) revert EmptyCredentialHash();
         if (student == address(0)) revert InvalidStudent();
-        
-        // Call the credential contract to issue the credential
-        // Assuming the CredentialContract has an issueCredential function
-        bool success = credentialContract.issueCredential(
-            _credentialHash,
-            student 
-        );
-        
-        require(success, "Failed to issue credential");
-    
-        return "Successfully Issued Credential";
-    }
+
+        // Issue the credential
+        uint256 newTokenId = credentialContract.issueCredential(student, tokenId, tokenURI);
+
+        emit CredentialIssued(msg.sender, student, newTokenId, tokenURI, block.timestamp);
+
+        return newTokenId;
     }
 
-  
+    function issueCredentialByAdmin(
+        address _schoolAddress,
+        address student,
+        uint256 tokenId,
+        string memory tokenURI
+    ) external onlyActiveAdmin(_schoolAddress, msg.sender) returns (uint256) {
+        // Validate inputs
+        if (student == address(0)) revert InvalidStudent();
+
+        // Issue the credential
+        uint256 newTokenId = credentialContract.issueCredential(student, tokenId, tokenURI);
+
+        emit CredentialIssued(_schoolAddress, student, newTokenId, tokenURI, block.timestamp);
+
+        return newTokenId;
+    }
+
+    function getCredential(uint256 tokenId)
+        external
+        view
+        onlyLoggedInSchool
+        returns (
+            address owner,
+            string memory uri,
+            bool isActive
+        )
+    {
+        return credentialContract.getCredential(tokenId);
+    }
+
+    function getCredentialsByOwner(address owner)
+        external
+        view
+        onlyLoggedInSchool
+        returns (uint256[] memory)
+    {
+        return credentialContract.getCredentialsByOwner(owner);
+    }
+
+    function revokeCredential(uint256 tokenId)
+        external
+        onlyLoggedInSchool
+    {
+        credentialContract.revokeCredential(tokenId);
+    }
+
+    function reactivateCredential(uint256 tokenId)
+        external
+        onlyLoggedInSchool
+    {
+        credentialContract.reactivateCredential(tokenId);
+    }
+
+    function isCredentialActive(uint256 tokenId)
+        external
+        view
+        onlyLoggedInSchool
+        returns (bool)
+    {
+        return credentialContract.isCredentialActive(tokenId);
+    }
+}

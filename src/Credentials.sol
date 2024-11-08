@@ -8,278 +8,98 @@ import {AccessControl} from "../lib/openzeppelin-contracts/contracts/access/Acce
 import "./Student.sol";
 import "./School.sol";
 
-
 contract CredentialContract is ERC721, ERC721URIStorage, ERC721Burnable, AccessControl {
-
     StudentContract public studentContract;
     SchoolContract public schoolContract;
-        // Add role definitions
+    
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant SCHOOL_ROLE = keccak256("SCHOOL_ROLE");
     bytes32 public constant STUDENT_ROLE = keccak256("STUDENT_ROLE");
 
-    struct Credential {
-        string courseName;
-        string grade;
-        uint256 issueDate;
-        bool claimed;
-        address student;
-    }
-
     uint256 private _tokenIdCounter;
-
-    mapping(bytes32 => uint256) private _hashToTokenId;
     
-
-    mapping(uint256 => string) private _credentialURIs;
-    mapping(uint256 => address) private _issuers;
-    mapping(address => uint256[]) private _issuedCredentials;
-    mapping(address => uint256[]) private _ownedCredentials;
-    mapping(uint256 => bytes32) private _tokenIdToHash;
-
-        // New mappings
-    mapping(uint256 => Credential) private _credentials;
-    mapping(address => uint256[]) private _pendingCredentials;
-
-    event CredentialIssued(uint256 indexed tokenId, address indexed recipient, string credentialURI);
+    mapping(uint256 => string) private _tokenURIs;
+    
+    event CredentialIssued(uint256 indexed tokenId, address indexed recipient);
     event CredentialRevoked(uint256 indexed tokenId, address indexed issuer);
-    event CredentialTransferred(uint256 indexed tokenId, address indexed previousOwner, address indexed newOwner);
-    event CredentialClaimed(uint256 indexed tokenId, address indexed student);
+    event CredentialTransferred(uint256 indexed tokenId, address indexed from, address to);
 
-    event CredentialCreated(
-        uint256 indexed tokenId,
-        address indexed school,
-        address indexed student,
-        string courseName,
-        string grade
-    );
-
-constructor(
-    address initialOwner,
-    address _schoolContract,
-    address _studentContract
-) ERC721("Decentralised Credential Network", "DCN") {
-    _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
-    _grantRole(ADMIN_ROLE, initialOwner);
-    
-    // Fix: Correct the contract initialization syntax
-    schoolContract = SchoolContract(_schoolContract);
-    studentContract = StudentContract(_studentContract);
-}
-
-function autoGrantSchoolRole(address school) external {
-    // Only allow calls from the school contract
-    require(msg.sender == address(schoolContract), "Only school contract can grant school role");
-    if (!hasRole(SCHOOL_ROLE, school)) {
-        _grantRole(SCHOOL_ROLE, school);
+    constructor(
+        address initialOwner,
+        address _schoolContract,
+        address _studentContract
+    ) ERC721("Decentralised Credential Network", "DCN") {
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(ADMIN_ROLE, initialOwner);
+        
+        schoolContract = SchoolContract(_schoolContract);
+        studentContract = StudentContract(_studentContract);
     }
-}
 
-function autoGrantStudentRole(address student) external {
-    // Only allow calls from the student contract
-    require(msg.sender == address(studentContract), "Only student contract can grant student role");
-    if (!hasRole(STUDENT_ROLE, student)) {
-        _grantRole(STUDENT_ROLE, student);
-    }
-}
-
-
-    function createCredential(
-    address student,
-    string memory courseName,
-    string memory grade,
-    string memory credentialURI
-) public returns (bytes32) {
-    require(student != address(0), "Invalid student address");
-
-    uint256 tokenId = _tokenIdCounter;
-    _tokenIdCounter++;
-
-    // Generate unique hash from credential details
-    bytes32 credentialHash = keccak256(
-        abi.encodePacked(
-            student,
-            courseName,
-            grade,
-            block.timestamp,
-            msg.sender
-        )
-    );
-    
-    // Ensure hash is unique
-    require(_hashToTokenId[credentialHash] == 0, "Credential hash already exists");
-    
-    _credentials[tokenId] = Credential({
-        courseName: courseName,
-        grade: grade,
-        issueDate: block.timestamp,
-        claimed: false,
-        student: student
-    });
-
-    _credentialURIs[tokenId] = credentialURI;
-    _issuers[tokenId] = msg.sender;
-    _issuedCredentials[msg.sender].push(tokenId);
-    _pendingCredentials[student].push(tokenId);
-    _hashToTokenId[credentialHash] = tokenId;
-    _tokenIdToHash[tokenId] = credentialHash;  
-
-    emit CredentialCreated(tokenId, msg.sender, student, courseName, grade);
-    return credentialHash; // Return hash instead of tokenId
-}
-function getHashFromTokenId(uint256 tokenId) external view returns (bytes32) {
-    require(tokenId < _tokenIdCounter, "Invalid token ID");
-    return _tokenIdToHash[tokenId];
-}
-  function _removeFromPendingCredentials(address student, uint256 tokenId) private {
-        uint256[] storage pendingCredentials = _pendingCredentials[student];
-        for (uint256 i = 0; i < pendingCredentials.length; i++) {
-            if (pendingCredentials[i] == tokenId) {
-                pendingCredentials[i] = pendingCredentials[pendingCredentials.length - 1];
-                pendingCredentials.pop();
-                break;
-            }
+    function autoGrantSchoolRole(address school) external {
+        require(msg.sender == address(schoolContract), "Only school contract can grant school role");
+        if (!hasRole(SCHOOL_ROLE, school)) {
+            _grantRole(SCHOOL_ROLE, school);
         }
     }
 
-    function getCredentialDetails(bytes32 credentialHash) external view returns (string memory, string memory, uint256) {
-    uint256 tokenId = _hashToTokenId[credentialHash];
-    require(tokenId != 0, "Invalid credential hash");
-    Credential memory cred = _credentials[tokenId];
-    return (cred.courseName, cred.grade, cred.issueDate);
-}
-
-function claimCredential(bytes32 credentialHash) public {
-    uint256 tokenId = _hashToTokenId[credentialHash];
-    require(tokenId != 0, "Invalid credential hash");
-    require(_credentials[tokenId].student == msg.sender, "Not the intended recipient");
-    require(!_credentials[tokenId].claimed, "Credential already claimed");
-    
-    _credentials[tokenId].claimed = true;
-    _safeMint(msg.sender, tokenId);
-    _ownedCredentials[msg.sender].push(tokenId);
-    
-    // Remove from pending credentials
-    _removeFromPendingCredentials(msg.sender, tokenId);
-    
-    emit CredentialClaimed(tokenId, msg.sender);
-}
-
-function getCredentialHash(
-    address student,
-    string memory courseName,
-    string memory grade
-) public view returns (bytes32) {
-    return keccak256(
-        abi.encodePacked(
-            student,
-            courseName,
-            grade,
-            block.timestamp,
-            msg.sender
-        )
-    );
- 
-}
-  function revokeCredential(bytes32 credentialHash) public {
-    uint256 tokenId = _hashToTokenId[credentialHash];
-    require(tokenId != 0, "Invalid credential hash");
-    require(_issuers[tokenId] == msg.sender, "Only the issuer can revoke this credential");
-    
-    address owner = ownerOf(tokenId);
-    burn(tokenId);
-    delete _credentialURIs[tokenId];
-    delete _issuers[tokenId];
-    delete _hashToTokenId[credentialHash];
-    _removeFromIssuedCredentials(msg.sender, credentialHash);
-    _removeFromOwnedCredentials(owner, credentialHash);
-
-    emit CredentialRevoked(tokenId, msg.sender);
-}
-
-    function transferCredential(bytes32 credentialHash, address newRecipient) public {
-    uint256 tokenId = _hashToTokenId[credentialHash];
-    require(tokenId != 0, "Invalid credential hash");
-    require(ownerOf(tokenId) == msg.sender, "Only the credential owner can transfer");
-    require(newRecipient != address(0), "Invalid recipient address");
-    
-    address previousOwner = msg.sender;
-    safeTransferFrom(previousOwner, newRecipient, tokenId);
-    _removeFromOwnedCredentials(previousOwner, credentialHash);
-    _ownedCredentials[newRecipient].push(tokenId);
-
-    emit CredentialTransferred(tokenId, previousOwner, newRecipient);
-}
-
-    function getCredentialURI(bytes32 credentialHash) public view returns (string memory) {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        return _credentialURIs[tokenId];
+    function autoGrantStudentRole(address student) external {
+        require(msg.sender == address(studentContract), "Only student contract can grant student role");
+        if (!hasRole(STUDENT_ROLE, student)) {
+            _grantRole(STUDENT_ROLE, student);
+        }
     }
 
-   function getCredentialIssuer(bytes32 credentialHash) public view returns (address) {
-    uint256 tokenId = _hashToTokenId[credentialHash];
-    require(tokenId != 0, "Invalid credential hash");
-    return _issuers[tokenId];
-}
+    function issueCredential(address student, string memory uri) external {
+        require(hasRole(SCHOOL_ROLE, msg.sender), "Only schools can issue credentials");
+        require(student != address(0), "Invalid student address");
 
-    function getIssuedCredentials(address issuer) public view returns (uint256[] memory) {
-        return _issuedCredentials[issuer];
+        uint256 tokenId = _tokenIdCounter;
+        _tokenIdCounter++;
+
+        _safeMint(student, tokenId);
+        _setTokenURI(tokenId, uri);
+        _tokenURIs[tokenId] = uri;
+
+        emit CredentialIssued(tokenId, student);
     }
 
-    function getOwnedCredentials(address owner) public view returns (uint256[] memory) {
-        return _ownedCredentials[owner];
+    function revokeCredential(uint256 tokenId) external {
+        require(hasRole(SCHOOL_ROLE, msg.sender), "Only schools can revoke credentials");
+        require(_exists(tokenId), "Token does not exist");
+
+        address owner = ERC721.ownerOf(tokenId);
+        _burn(tokenId);
+        delete _tokenURIs[tokenId];
+
+        emit CredentialRevoked(tokenId, msg.sender);
     }
 
-    function tokenURI(uint256 tokenId) public view override(ERC721, ERC721URIStorage) returns (string memory) {
-        return super.tokenURI(tokenId);
+    function transferCredential(uint256 tokenId, address to) external {
+        require(_exists(tokenId), "Token does not exist");
+        require(ownerOf(tokenId) == msg.sender, "Not the token owner");
+        require(to != address(0), "Invalid recipient address");
+
+        address from = msg.sender;
+        safeTransferFrom(from, to, tokenId);
+
+        emit CredentialTransferred(tokenId, from, to);
+    }
+
+    function getCurrentTokenId() external view returns (uint256) {
+        return _tokenIdCounter;
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 
-    function _removeFromIssuedCredentials(address issuer, bytes32 credentialHash) private {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        uint256[] storage issuedCredentials = _issuedCredentials[issuer];
-        for (uint256 i = 0; i < issuedCredentials.length; i++) {
-            if (issuedCredentials[i] == tokenId) {
-                issuedCredentials[i] = issuedCredentials[issuedCredentials.length - 1];
-                issuedCredentials.pop();
-                break;
-            }
-        }
+    function tokenURI(uint256 tokenId) public view override(ERC721, ERC721URIStorage) returns (string memory) {
+        require(_exists(tokenId), "Token does not exist");
+        return _tokenURIs[tokenId];
     }
 
-    function _removeFromOwnedCredentials(address owner, bytes32 credentialHash) private {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        uint256[] storage ownedCredentials = _ownedCredentials[owner];
-        for (uint256 i = 0; i < ownedCredentials.length; i++) {
-            if (ownedCredentials[i] == tokenId) {
-                ownedCredentials[i] = ownedCredentials[ownedCredentials.length - 1];
-                ownedCredentials.pop();
-                break;
-            }
-        }
-    }
-
-    function getCourseName(bytes32 credentialHash) public view returns (string memory) {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        return _credentials[tokenId].courseName;
-    }
-
-    function getGrade(bytes32 credentialHash) public view returns (string memory) {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        return _credentials[tokenId].grade;
-    }
-
-    function getIssueDate(bytes32 credentialHash) public view returns (uint256) {
-        uint256 tokenId = _hashToTokenId[credentialHash];
-        require(tokenId != 0, "Invalid credential hash");
-        return _credentials[tokenId].issueDate;
+    function _burn(uint256 tokenId) internal override(ERC721, ERC721URIStorage) {
+        super._burn(tokenId);
     }
 }
